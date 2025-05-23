@@ -1,5 +1,6 @@
 from torch import nn
 import torch.nn as nn
+import torch
 
 from convolution import DoubleConv2D
 
