@@ -1,7 +1,5 @@
-import numpy as np
 from torch import nn
 import torch.nn as nn
-import torch
 
 from convolution import DoubleConv2D
 
@@ -17,18 +15,6 @@ base_mapping = {
     "C": [0, 0, 0, 1],
 }
 
-nonlinear_funcs = [
-    lambda x: x[0],
-    lambda x: x[1],
-    lambda x: np.sin(x[0]),
-    lambda x: np.sin(np.pi * x[1]),
-    lambda x: x[1] ** 2,
-    lambda x: np.exp(-x[1]),
-    lambda x: np.log(1 + x[0]),
-    lambda x: 1 / (1 + np.exp(-x[1])),
-    lambda x: np.cos(x[0]),
-]
-
 
 class RNA3DFolding:
     def __init__(self):
@@ -38,8 +24,8 @@ class RNA3DFolding:
         self.pos_embed = self.position_embedding()
 
     def generate_random_weight_matrix(self, size):
-        limit = np.sqrt(6 / (self.fan_in + self.embedding_dimension))
-        W = np.random.uniform(-limit, limit, size=(size, self.embedding_dimension))
+        limit = torch.sqrt(torch.tensor(6.0 / (self.fan_in + self.embedding_dimension)))
+        W = torch.uniform(-limit, limit, size=(size, self.embedding_dimension))
         return W
 
     def sequence_to_matrix(self, sequence):
@@ -48,20 +34,31 @@ class RNA3DFolding:
 
         for base in sequence:
             matrix.append(base_mapping[base])
-        final_matrix = np.array(matrix)
+        final_matrix = torch.tensor(matrix, dtype=torch.float32)
         final_embedding = final_matrix @ current_W
 
         return final_embedding
 
     def position_embedding(self):
-        abs_pos = np.arange(1, self.sequence_len + 1)
+        abs_pos = torch.arange(1, self.sequence_len + 1, dtype=torch.float32)
         norm_pos = abs_pos / self.sequence_len
-        pos_matrix = np.column_stack((abs_pos, norm_pos))
+        pos_matrix = torch.column_stack((abs_pos, norm_pos))
 
-        pos_embedding = np.array(
-            [[f(row) for f in nonlinear_funcs] for row in pos_matrix]
-        )
+        pos_embedding_list = []
+        for row in pos_matrix:
+            row_features = []
+            row_features.append(row[0])  # x[0]
+            row_features.append(row[1])  # x[1]
+            row_features.append(torch.sin(row[0]))  # sin(x[0])
+            row_features.append(torch.sin(torch.pi * row[1]))  # sin(π * x[1])
+            row_features.append(row[1] ** 2)  # x[1]²
+            row_features.append(torch.exp(-row[1]))  # exp(-x[1])
+            row_features.append(torch.log(1 + row[0]))  # log(1 + x[0])
+            row_features.append(1 / (1 + torch.exp(-row[1])))  # sigmoid(x[1])
+            row_features.append(torch.cos(row[0]))  # cos(x[0])
+            pos_embedding_list.append(torch.stack(row_features))
 
+        pos_embedding = torch.stack(pos_embedding_list)
         current_W = self.generate_random_weight_matrix(size=9)
         return pos_embedding @ current_W
 
