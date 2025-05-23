@@ -9,4 +9,5 @@ This repository contains implementations of various research papers for predicti
 
 ## Implemented Papers
 
-- [Improved protein structure prediction using potentials from deep learning](https://arxiv.org/pdf/2002.05810)
+- [RNA Secondary Structure Prediction](https://arxiv.org/pdf/2002.05810)
+- [RNA Tertiary Structure Prediction](https://www.biorxiv.org/content/10.1101/2024.02.24.581671v1)
