@@ -48,8 +48,8 @@ class RNA3DFolding:
         pos_embedding_list = []
         for row in pos_matrix:
             row_features = []
-            row_features.append(row[0])  # x[0]
-            row_features.append(row[1])  # x[1]
+            row_features.append(row[0])
+            row_features.append(row[1])
             row_features.append(torch.sin(row[0]))  # sin(x[0])
             row_features.append(torch.sin(torch.pi * row[1]))  # sin(π * x[1])
             row_features.append(row[1] ** 2)  # x[1]²
