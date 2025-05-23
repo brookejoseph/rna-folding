@@ -1,26 +1,12 @@
-from torch import nn
 import torch
-
-from convolution import DoubleConv2D
-
-
-sequence = "GGGUGCUCAGUACGAGAGGAACCGCACCC"
-sequence_len = 29
-embedding_dimension = 64
-
-base_mapping = {
-    "A": [1, 0, 0, 0],
-    "U": [0, 1, 0, 0],
-    "G": [0, 0, 1, 0],
-    "C": [0, 0, 0, 1],
-}
+import torch.nn as nn
+import torch.nn.functional as F
 
 
-class RNA3DFolding:
+class RNA3DFolding(nn.Module):
     def __init__(self, max_seq_len=512, d_model=64):
         super().__init__()
         self.d_model = d_model
-
         self.sequence_embedding = nn.Linear(4, d_model)
         self.pos_embedding = nn.Linear(9, d_model)
 
@@ -38,108 +24,69 @@ class RNA3DFolding:
         self.conv2 = nn.Conv2d(d_model, 1, kernel_size=1)
 
     def generate_random_weight_matrix(self, size):
-        limit = torch.sqrt(torch.tensor(6.0 / (self.fan_in + self.d_model)))
-        W = torch.normal(-limit, limit, size=(size, self.d_model))
-        return W
+        limit = torch.sqrt(torch.tensor(6.0 / (4 + self.d_model)))
+        return torch.empty(size, self.d_model).uniform_(-limit.item(), limit.item())
 
     def sequence_to_matrix(self, sequence):
-        current_W = self.generate_random_weight_matrix(size=4)
-        matrix = []
-
-        for base in sequence:
-            matrix.append(base_mapping[base])
+        base_mapping = {
+            "A": [1, 0, 0, 0],
+            "U": [0, 1, 0, 0],
+            "C": [0, 0, 1, 0],
+            "G": [0, 0, 0, 1],
+        }
+        matrix = [base_mapping[base] for base in sequence]
         final_matrix = torch.tensor(matrix, dtype=torch.float32)
-        final_embedding = final_matrix @ current_W
+        return self.sequence_embedding(final_matrix)
 
-        return final_embedding
-
-    def position_embedding(self):
-        abs_pos = torch.arange(1, self.sequence_len + 1, dtype=torch.float32)
-        norm_pos = abs_pos / self.sequence_len
-        pos_matrix = torch.column_stack((abs_pos, norm_pos))
+    def position_embedding(self, sequence_len):
+        abs_pos = torch.arange(1, sequence_len + 1, dtype=torch.float32)
+        norm_pos = abs_pos / (sequence_len + 1)
+        pos_matrix = torch.stack([abs_pos, norm_pos], dim=1)
 
         pos_embedding_list = []
         for row in pos_matrix:
-            row_features = []
-            row_features.append(row[0])
-            row_features.append(row[1])
-            row_features.append(torch.sin(row[0]))
-            row_features.append(torch.sin(torch.pi * row[1]))
-            row_features.append(row[1] ** 2)
-            row_features.append(torch.exp(-row[1]))
-            row_features.append(torch.log(1 + row[0]))
-            row_features.append(1 / (1 + torch.exp(-row[1])))
-            row_features.append(torch.cos(row[0]))
-            pos_embedding_list.append(torch.stack(row_features))
+            features = [
+                row[0],
+                row[1],
+                torch.sin(row[0]),
+                torch.sin(torch.pi * row[1]),
+                row[1] ** 2,
+                torch.exp(-row[1]),
+                torch.log(1 + row[0]),
+                1 / (1 + torch.exp(-row[1])),
+                torch.cos(row[0]),
+            ]
+            pos_embedding_list.append(torch.tensor(features))
 
         pos_embedding = torch.stack(pos_embedding_list)
-        current_W = self.generate_random_weight_matrix(size=9)
-        return pos_embedding @ current_W
+        return self.pos_embedding(pos_embedding)
 
-    def pairwise_concat(self):
-        l_x_3d_embedding = self.run_through_transformer(
-            self.sequence_to_matrix(sequence)
-        )
-        X_i = l_x_3d_embedding.unsqueeze(1).repeat(1, self.sequence_len, 1)
-        X_j = l_x_3d_embedding.unsqueeze(0).repeat(self.sequence_len, 1, 1)
-        pairwise_concat = torch.cat([X_i, X_j], dim=2)
-        print(pairwise_concat.shape)
-        return pairwise_concat
+    def pairwise_concat(self, embedding):
+        L, d = embedding.shape
+        x_i = embedding.unsqueeze(1).repeat(1, L, 1)
+        x_j = embedding.unsqueeze(0).repeat(L, 1, 1)
+        return torch.cat([x_i, x_j], dim=-1)  # shape: L × L × 2d
 
-    def symmetrize_matrix_2d(self, scores):
-        scores_2d = scores.squeeze(-1)
-        return (scores_2d + scores_2d.T) / 2
+    def run_convolution(self, embedding):
+        pairwise = self.pairwise_concat(embedding)  # shape: L × L × 2d
+        L = pairwise.shape[0]
+        pairwise = pairwise.permute(2, 0, 1).unsqueeze(0)  # shape: 1 × 2d × L × L
 
-    def run_convolution(self):
-        pairwise_concat = self.pairwise_concat()
-        _, _, six_d = pairwise_concat.shape
-
-        pairwise_concat = pairwise_concat.unsqueeze(0)
-
-        model = DoubleConv2D(d=int(six_d // 6))
-
-        output = model(pairwise_concat)
-        output = output.squeeze(0)
-        symmetric_scores = self.symmetrize_matrix_2d(output)
-
-        return symmetric_scores
+        x = F.relu(self.bn1(self.conv1(pairwise)))
+        x = self.conv2(x)  # shape: 1 × 1 × L × L
+        x = x.squeeze(0).squeeze(0)  # shape: L × L
+        return (x + x.T) / 2  # symmetrize
 
     def forward(self, sequence):
-        seq_len = len(sequence)
+        L = len(sequence)
+        seq_embed = self.sequence_to_matrix(sequence)  # L × d
+        pos_embed = self.position_embedding(L)  # L × d
 
-        seq_embed = self.sequence_to_matrix(sequence)
+        combined = torch.cat([seq_embed, pos_embed], dim=1)  # L × 2d
+        transformer_input = torch.cat([combined, pos_embed], dim=1).unsqueeze(
+            0
+        )  # L × 3d
+        transformer_out = self.transformer(transformer_input).squeeze(0)  # L × 3d
 
-        pos_embed = self.position_embedding(seq_len)
-
-        combined = torch.cat([seq_embed, pos_embed], dim=1)
-        transformer_out = self.transformer(combined.unsqueeze(0)).squeeze(0)
-
-        final_embed = torch.cat([transformer_out, pos_embed], dim=1)
-
-        scores = self.run_convolution(final_embed)
-
+        scores = self.run_convolution(transformer_out)  # L × L
         return scores
-
-
-"""
-
-    def run_through_transformer(self, embedding_pre_transformer):
-        sequence_embedding = torch.tensor(
-            embedding_pre_transformer, dtype=torch.float32
-        )
-        pos_embedding = torch.tensor(self.pos_embed, dtype=torch.float32)
-
-        combined_embedding = torch.cat([sequence_embedding, pos_embedding], dim=1)
-
-        combined_tensor = combined_embedding.unsqueeze(0)
-        encoder_layer = nn.TransformerEncoderLayer(
-            d_model=128, nhead=8, batch_first=True
-        )
-        transformer_encoder = nn.TransformerEncoder(encoder_layer, num_layers=3)
-        final_tensor = torch.cat(
-            ([transformer_encoder(combined_tensor).squeeze(0), pos_embedding]), dim=1
-        )
-        return final_tensor
-
-        
-"""
