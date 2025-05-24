@@ -1,6 +1,5 @@
 import torch
 import torch.nn as nn
-import torch.nn.functional as F
 
 
 class RNA3DFolding(nn.Module):
@@ -65,28 +64,25 @@ class RNA3DFolding(nn.Module):
         L, d = embedding.shape
         x_i = embedding.unsqueeze(1).repeat(1, L, 1)
         x_j = embedding.unsqueeze(0).repeat(L, 1, 1)
-        return torch.cat([x_i, x_j], dim=-1)  # shape: L × L × 2d
+        return torch.cat([x_i, x_j], dim=-1)
 
     def run_convolution(self, embedding):
-        pairwise = self.pairwise_concat(embedding)  # shape: L × L × 2d
-        L = pairwise.shape[0]
-        pairwise = pairwise.permute(2, 0, 1).unsqueeze(0)  # shape: 1 × 2d × L × L
+        pairwise = self.pairwise_concat(embedding)
+        pairwise = pairwise.permute(2, 0, 1).unsqueeze(0)
 
-        x = F.relu(self.bn1(self.conv1(pairwise)))
-        x = self.conv2(x)  # shape: 1 × 1 × L × L
-        x = x.squeeze(0).squeeze(0)  # shape: L × L
-        return (x + x.T) / 2  # symmetrize
+        x = torch.relu(self.bn1(self.conv1(pairwise)))
+        x = self.conv2(x)
+        x = x.squeeze(0).squeeze(0)
+        return (x + x.T) / 2
 
     def forward(self, sequence):
         L = len(sequence)
-        seq_embed = self.sequence_to_matrix(sequence)  # L × d
-        pos_embed = self.position_embedding(L)  # L × d
+        seq_embed = self.sequence_to_matrix(sequence)
+        pos_embed = self.position_embedding(L)
 
-        combined = torch.cat([seq_embed, pos_embed], dim=1)  # L × 2d
-        transformer_input = torch.cat([combined, pos_embed], dim=1).unsqueeze(
-            0
-        )  # L × 3d
-        transformer_out = self.transformer(transformer_input).squeeze(0)  # L × 3d
+        combined = torch.cat([seq_embed, pos_embed], dim=1)
+        transformer_input = torch.cat([combined, pos_embed], dim=1).unsqueeze(0)
+        transformer_out = self.transformer(transformer_input).squeeze(0)
 
-        scores = self.run_convolution(transformer_out)  # L × L
+        scores = self.run_convolution(transformer_out)
         return scores
