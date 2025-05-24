@@ -47,7 +47,6 @@ class PostProcessingNetwork(nn.Module):
         M = self.create_constraint_matrix(sequence)
 
         U_processed = torch.tanh(U - self.s) * U
-        print("this is the U processed", U_processed)
         A_hat = torch.tanh(U - self.s) * torch.sigmoid(U)
         A = self.transform_T(A_hat, M)
         lambda_dual = self.w * torch.relu(A.sum(dim=1) - 1)
@@ -66,7 +65,6 @@ class PostProcessingNetwork(nn.Module):
             A_hat = torch.clamp(A_hat, 0, 1)
 
             A = self.transform_T(A_hat, M)
-            print("this is the A value ", A)
             decay_beta = self.gamma_beta**t
             lambda_dual = lambda_dual + self.beta * decay_beta * torch.relu(
                 A.sum(dim=1) - 1
